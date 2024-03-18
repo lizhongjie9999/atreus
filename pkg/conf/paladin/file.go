@@ -121,8 +121,42 @@ func (f *file) watchproc(base string) {
 		// use vim edit config will trigger rename
 		switch {
 		case event.Op&fsnotify.Write == fsnotify.Write, event.Op&fsnotify.Create == fsnotify.Create:
-			if err := f.reloadFile(event.Name); err != nil {
-				log.Printf("paladin: load file: %s error: %s, skipped", event.Name, err)
+			// k8s更新ConfigMap，存在两次软链接跳转，最终的隐藏文件夹每次名称不一样
+			// application.toml -> ..data/application.toml
+			// ..data -> ..2024_03_15_17_55_06.706673526
+			if path.Base(event.Name) == "..data" {
+				fi, err := os.Stat(event.Name)
+				if err != nil {
+					log.Printf("paladin(..data): check local config file fail! error: %s", err)
+					break
+				}
+				var paths []string
+				if fi.IsDir() {
+					files, err := ioutil.ReadDir(event.Name)
+					if err != nil {
+						log.Printf("paladin(..data): read dir %s error: %s", event.Name, err)
+						break
+					}
+					for _, file := range files {
+						if !file.IsDir() {
+							paths = append(paths, path.Join(event.Name, file.Name()))
+						}
+					}
+				}
+				if len(paths) == 0 {
+					log.Printf("paladin(..data): empty config path")
+					break
+				}
+
+				for _, subPath := range paths {
+					if err := f.reloadFile(subPath); err != nil {
+						log.Printf("paladin(..data): load file: %s error: %s, skipped", subPath, err)
+					}
+				}
+			} else {
+				if err := f.reloadFile(event.Name); err != nil {
+					log.Printf("paladin: load file: %s error: %s, skipped", event.Name, err)
+				}
 			}
 		default:
 			log.Printf("paladin: unsupport event %s ingored", event)
